@@ -1,0 +1,55 @@
+# Environment files
+.env
+.env.local
+.env.production
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# Hardhat
+contracts/cache/
+contracts/artifacts/
+contracts/typechain-types/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+
+# Secrets
+*.pem
+*.key
+secrets/
+
+# Coverage
+coverage/
+.coverage
+htmlcov/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

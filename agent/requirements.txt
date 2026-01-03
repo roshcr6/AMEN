@@ -1,0 +1,38 @@
+# AMEN Agent Dependencies
+# Python 3.10+ required
+
+# Web3 & Blockchain
+web3>=6.15.0
+eth-account>=0.11.0
+
+# Google Gemini AI (new SDK)
+google-genai>=1.0.0
+
+# Async Support
+aiohttp>=3.9.0
+
+# HTTP Server for Cloud Run health checks
+uvicorn>=0.27.0
+fastapi>=0.109.0
+asyncio-throttle>=1.0.2
+
+# HTTP Client
+httpx>=0.26.0
+requests>=2.31.0
+
+# Configuration
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Logging & Monitoring
+structlog>=24.1.0
+rich>=13.7.0
+
+# Data Processing
+pandas>=2.1.0
+numpy>=1.26.0
+
+# Utilities
+tenacity>=8.2.0  # Retry logic
+cachetools>=5.3.0  # Caching

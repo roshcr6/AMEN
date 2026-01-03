@@ -1,0 +1,121 @@
+# =============================================================================
+# AMEN - Google Cloud Build Configuration
+# Continuous deployment pipeline
+# =============================================================================
+#
+# Trigger this build with:
+#   gcloud builds submit --config=deploy/cloudbuild.yaml .
+#
+# Or set up a trigger on GitHub push
+
+steps:
+  # Build backend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: 
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/backend:${COMMIT_SHA}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/backend:latest'
+      - '-f'
+      - 'deploy/Dockerfile.backend'
+      - '.'
+    id: 'build-backend'
+
+  # Build frontend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/frontend:${COMMIT_SHA}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/frontend:latest'
+      - '-f'
+      - 'deploy/Dockerfile.frontend'
+      - '.'
+    id: 'build-frontend'
+
+  # Build agent image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/agent:${COMMIT_SHA}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/agent:latest'
+      - '-f'
+      - 'deploy/Dockerfile.agent'
+      - '.'
+    id: 'build-agent'
+
+  # Push all images
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/backend']
+    id: 'push-backend'
+    waitFor: ['build-backend']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/frontend']
+    id: 'push-frontend'
+    waitFor: ['build-frontend']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/agent']
+    id: 'push-agent'
+    waitFor: ['build-agent']
+
+  # Deploy backend to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'amen-backend'
+      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/backend:${COMMIT_SHA}'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+    id: 'deploy-backend'
+    waitFor: ['push-backend']
+
+  # Deploy frontend to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'amen-frontend'
+      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/frontend:${COMMIT_SHA}'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+    id: 'deploy-frontend'
+    waitFor: ['push-frontend']
+
+  # Deploy agent to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'amen-agent'
+      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/agent:${COMMIT_SHA}'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--no-allow-unauthenticated'
+    id: 'deploy-agent'
+    waitFor: ['push-agent']
+
+substitutions:
+  _REGION: us-central1
+
+images:
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/backend:${COMMIT_SHA}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/backend:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/frontend:${COMMIT_SHA}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/frontend:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/agent:${COMMIT_SHA}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/amen-repo/agent:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

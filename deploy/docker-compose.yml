@@ -1,0 +1,62 @@
+# AMEN Docker Compose
+# Local development and testing setup
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # Backend API
+  # ==========================================================================
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    ports:
+      - "8000:8080"
+    environment:
+      - DATABASE_URL=sqlite:///./amen_security.db
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+    volumes:
+      - backend_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Frontend Dashboard
+  # ==========================================================================
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - VITE_WS_URL=ws://localhost:8000/ws
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Agent (Optional - can run separately)
+  # ==========================================================================
+  agent:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.agent
+    depends_on:
+      - backend
+    env_file:
+      - ../.env
+    environment:
+      - BACKEND_URL=http://backend:8080
+    restart: unless-stopped
+    profiles:
+      - with-agent  # Only start with: docker-compose --profile with-agent up
+
+volumes:
+  backend_data:
