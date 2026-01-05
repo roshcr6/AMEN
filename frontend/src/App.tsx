@@ -5,6 +5,7 @@ import {
   Activity, 
   TrendingUp, 
   Pause, 
+  Ban,
   Zap,
   Eye,
   Brain,
@@ -23,7 +24,7 @@ import {
   Legend,
   ReferenceLine
 } from 'recharts';
-import { format, addMinutes } from 'date-fns';
+import { format } from 'date-fns';
 import {
   DashboardStats,
   SecurityEvent,
@@ -37,27 +38,6 @@ import {
   createWebSocket,
   simulateAttack
 } from './api';
-
-// =============================================================================
-// HELPER FUNCTIONS
-// =============================================================================
-
-// Format time for display - always show IST timezone
-// Backend sends UTC timestamps as strings, browser Date() is local time
-function formatIST(date: Date | string, formatStr: string = 'HH:mm:ss'): string {
-  if (typeof date === 'string') {
-    // Backend UTC timestamp - parse and add 5:30 for IST
-    const d = new Date(date);
-    const istDate = addMinutes(d, 330);
-    return format(istDate, formatStr);
-  } else {
-    // Browser Date object - already local time, just format it
-    // But we need IST, so calculate from UTC
-    const utcTime = date.getTime() + (date.getTimezoneOffset() * 60000);
-    const istDate = new Date(utcTime + (5.5 * 60 * 60 * 1000));
-    return format(istDate, formatStr);
-  }
-}
 
 // =============================================================================
 // COMPONENTS
@@ -124,7 +104,7 @@ function StatCard({
 function PriceChart({ data, attacks }: { data: PriceDataPoint[], attacks?: SecurityEvent[] }) {
   const chartData = data.map(d => ({
     ...d,
-    time: formatIST(d.timestamp, 'HH:mm'),
+    time: format(new Date(d.timestamp), 'HH:mm'),
     oracle: d.oracle_price,
     amm: d.amm_price
   }));
@@ -132,7 +112,7 @@ function PriceChart({ data, attacks }: { data: PriceDataPoint[], attacks?: Secur
   // Get attack times (PAUSE_AMM actions = blocked attacks)
   const attackTimes = (attacks || [])
     .filter(a => a.action === 'PAUSE_AMM' || a.action === 'PROACTIVE_PAUSE_AMM' || a.event_type === 'PROACTIVE_DEFENSE' || a.event_type === 'AMM_PAUSED')
-    .map(a => formatIST(a.timestamp, 'HH:mm'));
+    .map(a => format(new Date(a.timestamp), 'HH:mm'));
 
   return (
     <div className="card h-80">
@@ -203,7 +183,7 @@ function PriceChart({ data, attacks }: { data: PriceDataPoint[], attacks?: Secur
 }
 
 // Threat Timeline Component
-function ThreatTimeline({ threats, lastUpdate }: { threats: ThreatEntry[]; lastUpdate?: Date }) {
+function ThreatTimeline({ threats }: { threats: ThreatEntry[] }) {
   const getClassificationColor = (classification: string) => {
     switch (classification) {
       case 'FLASH_LOAN_ATTACK': return 'text-cyber-red';
@@ -225,17 +205,10 @@ function ThreatTimeline({ threats, lastUpdate }: { threats: ThreatEntry[]; lastU
       <div className="card-header flex items-center gap-2">
         <AlertTriangle className="w-4 h-4" />
         Threat Timeline
-        <span className="ml-auto text-xs text-cyber-green flex items-center gap-1">
-          <span className="w-2 h-2 bg-cyber-green rounded-full animate-pulse"></span>
-          LIVE {lastUpdate ? formatIST(lastUpdate, 'HH:mm:ss') : formatIST(new Date(), 'HH:mm:ss')} IST
-        </span>
       </div>
       <div className="space-y-3 max-h-96 overflow-y-auto">
         {threats.length === 0 ? (
-          <div className="p-4 bg-cyber-green/10 rounded-lg border border-cyber-green/20 text-center">
-            <p className="text-cyber-green text-sm font-semibold">✅ No threats detected</p>
-            <p className="text-gray-500 text-xs mt-1">Agent monitoring blockchain for attacks...</p>
-          </div>
+          <p className="text-gray-500 text-sm text-center py-4">No threats detected</p>
         ) : (
           threats.map((threat, i) => (
             <div 
@@ -256,7 +229,7 @@ function ThreatTimeline({ threats, lastUpdate }: { threats: ThreatEntry[]; lastU
                   <p className="text-sm text-gray-400 mt-1 truncate">{threat.explanation}</p>
                 )}
                 <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
-                  <span>{formatIST(threat.timestamp)} IST</span>
+                  <span>{format(new Date(threat.timestamp), 'HH:mm:ss')}</span>
                   {threat.action && (
                     <span className="text-cyber-blue">Action: {threat.action}</span>
                   )}
@@ -281,23 +254,16 @@ function ThreatTimeline({ threats, lastUpdate }: { threats: ThreatEntry[]; lastU
 }
 
 // Agent Actions Component
-function AgentActions({ actions, lastUpdate }: { actions: SecurityEvent[]; lastUpdate?: Date }) {
+function AgentActions({ actions }: { actions: SecurityEvent[] }) {
   return (
     <div className="card">
       <div className="card-header flex items-center gap-2">
         <Target className="w-4 h-4" />
         Agent Actions
-        <span className="ml-auto text-xs text-cyber-green flex items-center gap-1">
-          <span className="w-2 h-2 bg-cyber-green rounded-full animate-pulse"></span>
-          LIVE {lastUpdate ? formatIST(lastUpdate, 'HH:mm:ss') : formatIST(new Date(), 'HH:mm:ss')} IST
-        </span>
       </div>
       <div className="space-y-2 max-h-80 overflow-y-auto">
         {actions.length === 0 ? (
-          <div className="p-4 bg-cyber-green/10 rounded-lg border border-cyber-green/20 text-center">
-            <p className="text-cyber-green text-sm font-semibold">✅ No actions taken</p>
-            <p className="text-gray-500 text-xs mt-1">Agent ready to defend on-chain...</p>
-          </div>
+          <p className="text-gray-500 text-sm text-center py-4">No actions taken</p>
         ) : (
           actions.map((action, i) => (
             <div 
@@ -320,7 +286,7 @@ function AgentActions({ actions, lastUpdate }: { actions: SecurityEvent[]; lastU
                    action.action?.replace(/_/g, ' ')}
                 </p>
                 <p className="text-xs text-gray-400">
-                  {formatIST(action.timestamp, 'MMM d, HH:mm:ss')} IST
+                  {format(new Date(action.timestamp), 'MMM d, HH:mm:ss')}
                 </p>
               </div>
               {action.tx_hash && (
@@ -356,7 +322,7 @@ function LiveAttackLog({ events, stats, attackLogs, isAttacking }: {
   attackLogs?: AttackLogEntry[];
   isAttacking?: boolean;
 }) {
-  // Filter for attack-related events - keep only last 5
+  // Filter for attack-related events
   const attackEvents = events.filter(e => 
     e.event_type === 'AMM_PAUSED' || 
     e.event_type === 'ACTION' ||
@@ -416,7 +382,7 @@ function LiveAttackLog({ events, stats, attackLogs, isAttacking }: {
                 style={{ animationDelay: `${i * 100}ms` }}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-gray-500">[{formatIST(log.timestamp, 'HH:mm:ss.SSS')}]</span>
+                  <span className="text-gray-500">[{format(log.timestamp, 'HH:mm:ss.SSS')}]</span>
                   <span className="font-semibold">{log.message}</span>
                 </div>
                 {log.details && (
@@ -466,7 +432,7 @@ function LiveAttackLog({ events, stats, attackLogs, isAttacking }: {
               }`}
             >
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-gray-500">[{formatIST(event.timestamp)}]</span>
+                <span className="text-gray-500">[{format(new Date(event.timestamp), 'HH:mm:ss')}]</span>
                 {event.action === 'PAUSE_AMM' ? (
                   <span className="text-cyber-green font-bold">🛡️ ATTACK BLOCKED!</span>
                 ) : event.event_type === 'ACTION' ? (
@@ -536,7 +502,7 @@ function LiveLLMFeed({ threats, isAnalyzing, stats }: { threats: ThreatEntry[]; 
         )}
         {!isAnalyzing && lastUpdate && (
           <span className="ml-auto text-xs text-gray-500">
-            Last check: {formatIST(lastUpdate, 'HH:mm:ss')} IST
+            Last check: {format(lastUpdate, 'HH:mm:ss')}
           </span>
         )}
       </div>
@@ -550,7 +516,7 @@ function LiveLLMFeed({ threats, isAnalyzing, stats }: { threats: ThreatEntry[]; 
                 ✅ SYSTEM HEALTHY
               </span>
               <span className="text-xs text-gray-500">
-                {lastUpdate ? formatIST(lastUpdate, 'HH:mm:ss') : 'Now'} IST
+                {lastUpdate ? format(lastUpdate, 'HH:mm:ss') : 'Now'}
               </span>
             </div>
             <div className="bg-black/30 rounded p-2 font-mono text-xs">
@@ -567,25 +533,15 @@ function LiveLLMFeed({ threats, isAnalyzing, stats }: { threats: ThreatEntry[]; 
           </div>
         )}
         
-        {/* Always show recent threats if they exist */}
-        {recentThreatsWithExplanation.length === 0 ? (
-          !isHealthy && (
-            <div className="text-center py-4">
-              <p className="text-gray-500 text-sm">No LLM analyses yet</p>
-              <p className="text-gray-600 text-xs mt-1">
-                🧠 Gemini will analyze when anomalies are detected
-              </p>
-            </div>
-          )
+        {recentThreatsWithExplanation.length === 0 && !isHealthy ? (
+          <div className="text-center py-4">
+            <p className="text-gray-500 text-sm">No LLM analyses yet</p>
+            <p className="text-gray-600 text-xs mt-1">
+              🧠 Gemini will analyze when anomalies are detected
+            </p>
+          </div>
         ) : (
-          <>
-            {isHealthy && (
-              <div className="text-xs text-gray-500 mb-2 flex items-center gap-2">
-                <span className="w-2 h-2 bg-cyber-green rounded-full"></span>
-                Recent threat detections:
-              </div>
-            )}
-            {recentThreatsWithExplanation.map((threat, i) => (
+          recentThreatsWithExplanation.map((threat, i) => (
             <div 
               key={i} 
               className="p-3 bg-cyber-gray/50 rounded-lg border-l-2 border-cyber-purple animate-fade-in"
@@ -599,7 +555,7 @@ function LiveLLMFeed({ threats, isAnalyzing, stats }: { threats: ThreatEntry[]; 
                   🎯 {threat.classification}
                 </span>
                 <span className="text-xs text-gray-500">
-                  {formatIST(threat.timestamp)} IST
+                  {format(new Date(threat.timestamp), 'HH:mm:ss')}
                 </span>
               </div>
               
@@ -638,8 +594,7 @@ function LiveLLMFeed({ threats, isAnalyzing, stats }: { threats: ThreatEntry[]; 
                 </div>
               )}
             </div>
-          ))}
-          </>
+          ))
         )}
       </div>
       
@@ -655,7 +610,7 @@ function LiveLLMFeed({ threats, isAnalyzing, stats }: { threats: ThreatEntry[]; 
 }
 
 // Agent Reasoning Display
-function AgentReasoning({ event: _event, latestThreat, stats }: { 
+function AgentReasoning({ event, latestThreat, stats }: { 
   event: SecurityEvent | null; 
   latestThreat?: ThreatEntry | null;
   stats?: DashboardStats | null;
@@ -704,7 +659,7 @@ function AgentReasoning({ event: _event, latestThreat, stats }: {
           <span className="text-xs text-gray-500 ml-2">Protected by AMEN</span>
           <span className="ml-auto text-xs text-cyber-green flex items-center gap-1">
             <span className="w-2 h-2 bg-cyber-green rounded-full animate-pulse"></span>
-            LIVE {formatIST(lastRefresh, 'HH:mm:ss')} IST
+            LIVE {format(lastRefresh, 'HH:mm:ss')}
           </span>
         </div>
         <div className="space-y-3">
@@ -760,7 +715,7 @@ function AgentReasoning({ event: _event, latestThreat, stats }: {
           <span className="text-xs text-gray-500 ml-2">Powered by Gemini LLM</span>
           <span className="ml-auto text-xs text-cyber-green flex items-center gap-1">
             <span className="w-2 h-2 bg-cyber-green rounded-full animate-pulse"></span>
-            LIVE {formatIST(lastRefresh, 'HH:mm:ss')} IST
+            LIVE {format(lastRefresh, 'HH:mm:ss')}
           </span>
         </div>
         <div className="space-y-3">
@@ -821,7 +776,7 @@ function AgentReasoning({ event: _event, latestThreat, stats }: {
         <span className="text-xs text-cyber-yellow ml-2">🧠 Gemini LLM Active</span>
         <span className="ml-auto text-xs text-cyber-red flex items-center gap-1">
           <span className="w-2 h-2 bg-cyber-red rounded-full animate-ping"></span>
-          LIVE {formatIST(lastRefresh, 'HH:mm:ss')} IST
+          LIVE {format(lastRefresh, 'HH:mm:ss')}
         </span>
       </div>
       <div className="space-y-3">
@@ -947,22 +902,22 @@ function App() {
     setTimeout(() => setActionResult(null), 10000);
   };
 
-  // Fetch data - limit to 5 items for clean display
+  // Fetch data
   const fetchData = useCallback(async () => {
     try {
       const [statsData, pricesData, threatsData, actionsData, eventsData] = await Promise.all([
         fetchStats(),
         fetchPriceHistory(1),
-        fetchThreats(5),  // Only 5 threats
-        fetchActions(5),  // Only 5 actions
-        fetchEvents(5)    // Only 5 events
+        fetchThreats(20),
+        fetchActions(10),
+        fetchEvents(10)
       ]);
       
       setStats(statsData);
       setPriceData(pricesData);
-      setThreats(threatsData.slice(0, 5));  // Ensure max 5
-      setActions(actionsData.slice(0, 5));  // Ensure max 5
-      setEvents(eventsData.slice(0, 5));    // Ensure max 5
+      setThreats(threatsData);
+      setActions(actionsData);
+      setEvents(eventsData);
       
       // Find latest assessment
       const assessment = eventsData.find(e => e.event_type === 'ASSESSMENT');
@@ -1041,7 +996,7 @@ function App() {
               {connected ? 'Connected' : 'Disconnected'}
             </div>
             <div className="text-xs text-gray-500">
-              Last update: {formatIST(lastUpdate)} IST
+              Last update: {format(lastUpdate, 'HH:mm:ss')}
             </div>
           </div>
         </div>
@@ -1127,8 +1082,8 @@ function App() {
         {/* Right Column - Threats, Actions & Attack Log */}
         <div className="space-y-6">
           <LiveAttackLog events={events} stats={stats} attackLogs={attackLogs} isAttacking={attackLoading} />
-          <ThreatTimeline threats={threats} lastUpdate={lastUpdate} />
-          <AgentActions actions={actions} lastUpdate={lastUpdate} />
+          <ThreatTimeline threats={threats} />
+          <AgentActions actions={actions} />
         </div>
       </div>
 

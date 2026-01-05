@@ -68,11 +68,9 @@ class Reporter:
         self.event_history: List[SecurityEvent] = []
         
         # HTTP client for backend communication
-        # Use longer timeout for Cloud Run cold starts
         self.client = httpx.AsyncClient(
             base_url=self.backend_url,
-            timeout=httpx.Timeout(30.0, connect=10.0),  # 30s total, 10s connect
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+            timeout=10.0
         )
         
         logger.info("Reporter initialized", backend_url=self.backend_url)
@@ -98,7 +96,7 @@ class Reporter:
     ) -> SecurityEvent:
         """Report a threat assessment"""
         event = SecurityEvent(
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now().isoformat(),
             block_number=snapshot.block_number,
             event_type="ASSESSMENT",
             oracle_price=snapshot.oracle_price,
@@ -121,7 +119,7 @@ class Reporter:
     ) -> SecurityEvent:
         """Report a policy decision"""
         event = SecurityEvent(
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now().isoformat(),
             block_number=snapshot.block_number,
             event_type="DECISION",
             oracle_price=snapshot.oracle_price,
@@ -147,7 +145,7 @@ class Reporter:
     ) -> SecurityEvent:
         """Report an executed on-chain action"""
         event = SecurityEvent(
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now().isoformat(),
             block_number=snapshot.block_number,
             event_type="ACTION",
             oracle_price=snapshot.oracle_price,
@@ -172,7 +170,7 @@ class Reporter:
     ) -> SecurityEvent:
         """Report AMM emergency pause - ATTACK BLOCKED!"""
         event = SecurityEvent(
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now().isoformat(),
             block_number=snapshot.block_number,
             event_type="AMM_PAUSED",
             oracle_price=snapshot.oracle_price,
@@ -206,7 +204,7 @@ class Reporter:
     ) -> SecurityEvent:
         """Report proactive defense activation - immediate AMM pause on large deviation"""
         event = SecurityEvent(
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now().isoformat(),
             block_number=snapshot.block_number,
             event_type="PROACTIVE_DEFENSE",
             oracle_price=snapshot.oracle_price,
@@ -276,40 +274,24 @@ class Reporter:
         # Send to backend
         await self._send_to_backend(event)
     
-    async def _send_to_backend(self, event: SecurityEvent, retries: int = 3) -> None:
-        """Send event to backend API with retry logic"""
-        import asyncio
-        
-        for attempt in range(retries):
-            try:
-                response = await self.client.post(
-                    "/api/events",
-                    json=event.to_dict()
+    async def _send_to_backend(self, event: SecurityEvent) -> None:
+        """Send event to backend API"""
+        try:
+            response = await self.client.post(
+                "/api/events",
+                json=event.to_dict()
+            )
+            
+            if response.status_code != 200:
+                logger.warning(
+                    "Backend API returned non-200",
+                    status=response.status_code
                 )
                 
-                if response.status_code == 200:
-                    logger.debug("Event sent to backend successfully", event_type=event.event_type)
-                    return  # Success!
-                else:
-                    logger.warning(
-                        "Backend API returned non-200",
-                        status=response.status_code,
-                        body=response.text[:200] if response.text else "empty",
-                        attempt=attempt + 1
-                    )
-                    
-            except httpx.ConnectError as e:
-                logger.warning("Backend connection error", error=str(e), url=self.backend_url, attempt=attempt + 1)
-            except httpx.TimeoutException as e:
-                logger.warning("Backend timeout", error=str(e), url=self.backend_url, attempt=attempt + 1)
-            except Exception as e:
-                logger.warning("Failed to send event to backend", error=str(e), error_type=type(e).__name__, attempt=attempt + 1)
-            
-            # Wait before retry (exponential backoff)
-            if attempt < retries - 1:
-                wait_time = 2 ** attempt  # 1s, 2s, 4s
-                logger.debug(f"Retrying in {wait_time}s...")
-                await asyncio.sleep(wait_time)
+        except httpx.ConnectError:
+            logger.debug("Backend not available, skipping send")
+        except Exception as e:
+            logger.warning("Failed to send event to backend", error=str(e))
     
     async def get_recent_events(self, count: int = 50) -> List[Dict[str, Any]]:
         """Get recent events from history"""

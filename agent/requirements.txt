@@ -5,15 +5,11 @@
 web3>=6.15.0
 eth-account>=0.11.0
 
-# Google Gemini AI (new SDK)
-google-genai>=1.0.0
+# Google Gemini AI
+google-generativeai>=0.3.2
 
 # Async Support
 aiohttp>=3.9.0
-
-# HTTP Server for Cloud Run health checks
-uvicorn>=0.27.0
-fastapi>=0.109.0
 asyncio-throttle>=1.0.2
 
 # HTTP Client

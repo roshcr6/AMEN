@@ -22,7 +22,6 @@ Configuration:
 import asyncio
 import signal
 import sys
-import os
 from datetime import datetime
 from typing import Optional
 
@@ -32,11 +31,6 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.live import Live
 from rich.layout import Layout
-
-# FastAPI for Cloud Run health checks
-from fastapi import FastAPI
-from contextlib import asynccontextmanager
-import uvicorn
 
 from config import load_config, AgentConfig
 from observer import Observer, MarketSnapshot
@@ -359,35 +353,21 @@ class AMENAgent:
         }
 
 
-# Global agent instance for health check endpoint
-_agent: Optional[AMENAgent] = None
-_agent_error: Optional[str] = None
-_agent_task: Optional[asyncio.Task] = None
-
-
-async def start_agent_background():
-    """Start agent in background - doesn't block HTTP server startup"""
-    global _agent, _agent_error
+async def main():
+    """Main entry point"""
     
-    try:
-        logger.info("Loading configuration...")
-        config = load_config()
-        
-        logger.info("Initializing agent...")
-        _agent = AMENAgent(config)
-        
-        logger.info("Starting agent loop...")
-        await _agent.run()
-    except Exception as e:
-        _agent_error = str(e)
-        logger.error("Agent initialization failed", error=str(e), exc_info=True)
-
-
-# FastAPI app for Cloud Run health checks
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifespan handler - starts agent in background, doesn't block HTTP startup"""
-    global _agent_task
+    # Set UTF-8 encoding for Windows console (safe method)
+    import sys
+    import os
+    if sys.platform == "win32":
+        # Use environment variable instead of detaching stdout/stderr
+        # Detaching can cause terminal communication issues
+        os.environ["PYTHONIOENCODING"] = "utf-8"
+        try:
+            # Try to set console code page
+            os.system("chcp 65001 > nul 2>&1")
+        except:
+            pass
     
     console.print("""
     [bold blue]
@@ -399,121 +379,42 @@ async def lifespan(app: FastAPI):
     ╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝
     [/bold blue]
     [dim]Agentic Manipulation Engine Neutralizer[/dim]
-    [dim]DeFi Security System v1.0 (Cloud Run)[/dim]
+    [dim]DeFi Security System v1.0[/dim]
     """)
     
-    # Start agent loop in background task (doesn't block HTTP server startup)
-    _agent_task = asyncio.create_task(start_agent_background())
-    logger.info("Agent initialization started in background")
-    
-    yield
-    
-    # Shutdown
-    logger.info("Shutting down agent...")
-    if _agent:
-        _agent.running = False
-    if _agent_task:
-        _agent_task.cancel()
-        try:
-            await _agent_task
-        except asyncio.CancelledError:
-            pass
-
-
-app = FastAPI(title="AMEN Agent", lifespan=lifespan)
-
-
-@app.get("/")
-async def health():
-    """Health check endpoint for Cloud Run"""
-    # Always return healthy so Cloud Run doesn't kill us
-    return {"status": "healthy", "service": "amen-agent"}
-
-
-@app.get("/health")
-async def health_detailed():
-    """Detailed health check"""
-    if _agent_error:
-        return {"status": "error", "error": _agent_error}
-    if _agent:
-        return {
-            "status": "healthy",
-            "agent": _agent.get_status()
-        }
-    return {"status": "starting"}
-
-
-@app.get("/status")
-async def agent_status():
-    """Get agent status"""
-    if _agent:
-        return _agent.get_status()
-    return {"status": "not_initialized"}
-
-
-async def main():
-    """Main entry point - runs both HTTP server and agent loop"""
-    
-    # Set UTF-8 encoding for console
-    if sys.platform == "win32":
-        os.environ["PYTHONIOENCODING"] = "utf-8"
-        try:
-            os.system("chcp 65001 > nul 2>&1")
-        except:
-            pass
-    
-    # Get port from environment (Cloud Run sets PORT)
-    port = int(os.environ.get("PORT", 8080))
-    
-    # Check if running in Cloud Run (has PORT env var set by platform)
-    is_cloud_run = "K_SERVICE" in os.environ or "PORT" in os.environ
-    
-    if is_cloud_run:
-        # Cloud Run mode: Run HTTP server with agent in background
-        logger.info(f"Starting AMEN Agent in Cloud Run mode on port {port}")
-        config = uvicorn.Config(
-            app=app,
-            host="0.0.0.0",
-            port=port,
-            log_level="info"
-        )
-        server = uvicorn.Server(config)
-        await server.serve()
-    else:
-        # Local mode: Run agent directly without HTTP server
-        console.print("""
-    [bold blue]
-     █████╗ ███╗   ███╗███████╗███╗   ██╗
-    ██╔══██╗████╗ ████║██╔════╝████╗  ██║
-    ███████║██╔████╔██║█████╗  ██╔██╗ ██║
-    ██╔══██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║
-    ██║  ██║██║ ╚═╝ ██║███████╗██║ ╚████║
-    ╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝
-    [/bold blue]
-    [dim]Agentic Manipulation Engine Neutralizer[/dim]
-    [dim]DeFi Security System v1.0[/dim]
-        """)
+    try:
+        # Load configuration
+        logger.info("Loading configuration...")
+        config = load_config()
         
-        try:
-            config = load_config()
-            agent = AMENAgent(config)
-            
-            def signal_handler(signum, frame):
-                if signum == signal.SIGINT:
-                    logger.info("Received shutdown signal")
-                    agent.running = False
-            
-            signal.signal(signal.SIGINT, signal_handler)
-            if hasattr(signal, 'SIGTERM'):
-                signal.signal(signal.SIGTERM, signal_handler)
-            
-            await agent.run()
-            
-        except Exception as e:
-            logger.error("Failed to start agent", error=str(e), exc_info=True)
-            console.print(f"[red]Error: {e}[/red]")
-            import traceback
-            traceback.print_exc()
+        # Create and run agent
+        agent = AMENAgent(config)
+        
+        # Setup signal handlers (Windows compatible)
+        # Only stop on explicit Ctrl+C from user
+        def signal_handler(signum, frame):
+            print(f"DEBUG: Signal handler called with signal {signum}")
+            # Only count actual user interrupts, not spurious signals
+            if signum == signal.SIGINT:
+                print("DEBUG: SIGINT received - stopping agent")
+                logger.info("Received shutdown signal (SIGINT)")
+                agent.running = False
+            else:
+                print(f"DEBUG: Ignoring signal {signum}")
+        
+        signal.signal(signal.SIGINT, signal_handler)
+        if hasattr(signal, 'SIGTERM'):
+            signal.signal(signal.SIGTERM, signal_handler)
+        if hasattr(signal, 'SIGBREAK'):
+            signal.signal(signal.SIGBREAK, signal_handler)
+        
+        await agent.run()
+        
+    except Exception as e:
+        logger.error("Failed to start agent", error=str(e), exc_info=True)
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 

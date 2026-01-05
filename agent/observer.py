@@ -95,21 +95,10 @@ class Observer:
     
     def __init__(self, config: AgentConfig):
         self.config = config
-        self.w3 = Web3(Web3.HTTPProvider(
-            config.sepolia_rpc_url,
-            request_kwargs={'timeout': 30}  # Longer timeout for Cloud Run
-        ))
-        
-        # Retry connection up to 5 times
-        import time
-        for attempt in range(5):
-            if self.w3.is_connected():
-                break
-            logger.warning(f"Connection attempt {attempt + 1}/5 failed, retrying...")
-            time.sleep(2)
+        self.w3 = Web3(Web3.HTTPProvider(config.sepolia_rpc_url))
         
         if not self.w3.is_connected():
-            raise ConnectionError(f"Failed to connect to {config.sepolia_rpc_url} after 5 attempts")
+            raise ConnectionError(f"Failed to connect to {config.sepolia_rpc_url}")
         
         logger.info("Connected to blockchain", 
                    chain_id=self.w3.eth.chain_id,
@@ -319,7 +308,7 @@ class Observer:
         
         # Create snapshot
         snapshot = MarketSnapshot(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(),
             block_number=current_block,
             
             oracle_price=oracle_data.price,

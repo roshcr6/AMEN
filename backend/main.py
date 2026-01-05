@@ -36,26 +36,14 @@ load_dotenv("../.env")
 RPC_URL = os.getenv("SEPOLIA_RPC_URL", "https://eth-sepolia.g.alchemy.com/v2/DsAGO4co8iV4lmwiZYHW8")
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
 
-# Load contract addresses from environment or use defaults (Sepolia deployment)
-CONTRACT_ADDRESSES = {
-    "AMM": os.getenv("AMM_POOL_ADDRESS", "0x0Db2401DA9810F7f1023D8df8D52328E3A0f92Cd"),
-    "LENDING_VAULT": os.getenv("LENDING_VAULT_ADDRESS", "0x09aEaE5751AFbc19A20f75eFd63B7431c094224c"),
-    "ORACLE": os.getenv("ORACLE_ADDRESS", "0x0b939bbab85d69A27df77b45c1e5b7E8B5FB3D3f"),
-    "WETH": os.getenv("WETH_ADDRESS", "0x7E8c42a6F66c2225015FDFf0814D7c1BaCc4A9d2"),
-    "USDC": os.getenv("USDC_ADDRESS", "0xd333C2bfD3780Cb9eaf1a21B3EA856cBbf8479E1"),
-}
-
-# Try to load from deployment file (for local dev), otherwise use env vars
+# Load contract addresses
 DEPLOYMENT_FILE = os.path.join(os.path.dirname(__file__), "..", "contracts", "deployments", "sepolia-deployment.json")
+CONTRACT_ADDRESSES = {}
 try:
     with open(DEPLOYMENT_FILE) as f:
-        file_addresses = json.load(f).get("contracts", {})
-        CONTRACT_ADDRESSES.update({k: v for k, v in file_addresses.items() if v})
+        CONTRACT_ADDRESSES = json.load(f).get("contracts", {})
 except:
-    pass  # Use environment variables or defaults
-
-# Agent private key for transactions
-AGENT_PRIVATE_KEY = os.getenv("AGENT_PRIVATE_KEY", "51a987387d54ac66224c321a06bcc389cfeb6627c13badda66d32008ac42c244")
+    pass
 
 # Simple ABI for paused() function
 PAUSED_ABI = [{"inputs": [], "name": "paused", "outputs": [{"type": "bool"}], "stateMutability": "view", "type": "function"}]
@@ -247,46 +235,16 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS configuration - allow all origins for Cloud Run deployment
-# In production, you would restrict this to specific domains
-cors_origins_env = os.getenv("CORS_ORIGINS", "")
-if cors_origins_env:
-    cors_origins = cors_origins_env.split(",")
-else:
-    # Default: allow localhost and Cloud Run frontend
-    cors_origins = [
-        "http://localhost:3001",
-        "http://localhost:5173",
-        "https://amen-frontend-93939916612.us-central1.run.app",
-    ]
-
-# For Cloud Run, allow all origins (simpler for demo)
-allow_all_origins = os.getenv("ALLOW_ALL_ORIGINS", "true").lower() == "true"
+# CORS configuration
+cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3001,http://localhost:5173").split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if allow_all_origins else cors_origins,
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
-
-
-# Add no-cache middleware to prevent stale data
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-
-class NoCacheMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        if request.url.path.startswith("/api/"):
-            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
-            response.headers["Pragma"] = "no-cache"
-            response.headers["Expires"] = "0"
-        return response
-
-app.add_middleware(NoCacheMiddleware)
 
 
 # =============================================================================
@@ -513,332 +471,149 @@ async def get_price_history(
 
 
 # =============================================================================
-# ADMIN ENDPOINTS (Simulate Attack / Reset AMM) - Pure Web3 Implementation
+# ADMIN ENDPOINTS (Simulate Attack / Reset AMM)
 # =============================================================================
-
-# ABIs for contract interactions
-AMM_ABI = [
-    {"inputs": [], "name": "paused", "outputs": [{"type": "bool"}], "stateMutability": "view", "type": "function"},
-    {"inputs": [], "name": "getSpotPrice", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"},
-    {"inputs": [], "name": "getReserves", "outputs": [{"name": "wethReserve", "type": "uint256"}, {"name": "usdcReserve", "type": "uint256"}], "stateMutability": "view", "type": "function"},
-    {"inputs": [{"name": "tokenIn", "type": "address"}, {"name": "amountIn", "type": "uint256"}, {"name": "minAmountOut", "type": "uint256"}], "name": "swap", "outputs": [{"type": "uint256"}], "stateMutability": "nonpayable", "type": "function"},
-    {"inputs": [], "name": "unpause", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
-]
-
-ERC20_ABI = [
-    {"inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}], "name": "approve", "outputs": [{"type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
-    {"inputs": [{"name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"},
-    {"inputs": [{"name": "to", "type": "address"}, {"name": "amount", "type": "uint256"}], "name": "mint", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
-]
-
-VAULT_ABI = [
-    {"inputs": [], "name": "paused", "outputs": [{"type": "bool"}], "stateMutability": "view", "type": "function"},
-    {"inputs": [], "name": "liquidationsBlocked", "outputs": [{"type": "bool"}], "stateMutability": "view", "type": "function"},
-    {"inputs": [], "name": "unpause", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
-    {"inputs": [], "name": "unblockLiquidations", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
-]
-
-
-def get_agent_account():
-    """Get the agent account for signing transactions"""
-    from eth_account import Account
-    return Account.from_key(AGENT_PRIVATE_KEY)
-
 
 @app.post("/api/admin/simulate-attack")
 async def simulate_attack():
     """
-    Simulate a flash loan attack on the AMM using Web3.py
-    Performs a large swap to manipulate the price
+    Simulate a flash loan attack on the AMM
+    The AMEN agent should detect and block this
     """
+    import subprocess
+    
     try:
-        amm_address = Web3.to_checksum_address(CONTRACT_ADDRESSES["AMM"])
-        weth_address = Web3.to_checksum_address(CONTRACT_ADDRESSES["WETH"])
+        contracts_dir = os.path.join(os.path.dirname(__file__), "..", "contracts")
         
-        amm = w3.eth.contract(address=amm_address, abi=AMM_ABI)
-        weth = w3.eth.contract(address=weth_address, abi=ERC20_ABI)
+        # Use the attack-with-defense script that shows blocking
+        result = subprocess.run(
+            "npx hardhat run scripts/attack-with-defense.js --network sepolia",
+            cwd=contracts_dir,
+            capture_output=True,
+            timeout=120,
+            shell=True,
+            encoding='utf-8',
+            errors='replace'  # Replace undecodable chars instead of crashing
+        )
         
-        # Check if AMM is paused first
-        if amm.functions.paused().call():
-            # Record that attack was blocked because AMM was already paused
-            async with async_session_factory() as session:
-                blocked_event = SecurityEvent(
-                    timestamp=datetime.utcnow(),
-                    block_number=w3.eth.block_number,
-                    event_type="AMM_PAUSED",
-                    oracle_price=2000.0,
-                    amm_price=2000.0,
-                    price_deviation=0,
-                    classification="FLASH_LOAN_ATTACK",
-                    confidence=0.95,
-                    explanation="🛡️ ATTACK BLOCKED! AMM was already paused by AMEN agent - attack attempt rejected.",
-                    evidence=["Attack attempt detected", "AMM already paused", "Swap would have been rejected"],
-                    action="PAUSE_AMM",
-                    action_reason="Proactive defense - AMM paused before attack",
-                    execute_on_chain=True,
-                    tx_hash="blocked-amm-paused"
-                )
-                session.add(blocked_event)
-                await session.commit()
-            
+        # Handle None values
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        output = stdout + stderr
+        
+        # Check if attack was blocked
+        if "BLOCKED" in output.upper() or "PAUSED" in output.upper() or "DEFENSE" in output.upper():
             return {
                 "success": True,
                 "blocked": True,
-                "message": "🛡️ Attack blocked - AMM is already paused by AMEN agent!"
+                "message": "🛡️ Attack was blocked by AMEN agent!",
+                "output": output[-1000:] if len(output) > 1000 else output
             }
-        
-        # Get current price
-        price_before = amm.functions.getSpotPrice().call() / 1e8
-        
-        # Attack parameters: Large WETH swap to crash price
-        attack_amount = Web3.to_wei(5, 'ether')  # 5 WETH to crash price
-        
-        account = get_agent_account()
-        nonce = w3.eth.get_transaction_count(account.address)
-        
-        # First mint WETH for the attack (we have mint permission)
-        mint_tx = weth.functions.mint(account.address, attack_amount).build_transaction({
-            'from': account.address,
-            'nonce': nonce,
-            'gas': 100000,
-            'gasPrice': w3.eth.gas_price,
-            'chainId': 11155111
-        })
-        signed_mint = account.sign_transaction(mint_tx)
-        mint_hash = w3.eth.send_raw_transaction(signed_mint.raw_transaction)
-        w3.eth.wait_for_transaction_receipt(mint_hash, timeout=60)
-        
-        # Approve AMM to spend WETH
-        nonce += 1
-        approve_tx = weth.functions.approve(amm_address, attack_amount).build_transaction({
-            'from': account.address,
-            'nonce': nonce,
-            'gas': 100000,
-            'gasPrice': w3.eth.gas_price,
-            'chainId': 11155111
-        })
-        signed_approve = account.sign_transaction(approve_tx)
-        approve_hash = w3.eth.send_raw_transaction(signed_approve.raw_transaction)
-        w3.eth.wait_for_transaction_receipt(approve_hash, timeout=60)
-        
-        # Execute the attack swap (WETH → USDC to crash WETH price)
-        nonce += 1
-        try:
-            swap_tx = amm.functions.swap(weth_address, attack_amount, 0).build_transaction({
-                'from': account.address,
-                'nonce': nonce,
-                'gas': 300000,
-                'gasPrice': w3.eth.gas_price,
-                'chainId': 11155111
-            })
-            signed_swap = account.sign_transaction(swap_tx)
-            swap_hash = w3.eth.send_raw_transaction(signed_swap.raw_transaction)
-            receipt = w3.eth.wait_for_transaction_receipt(swap_hash, timeout=60)
-            
-            if receipt['status'] == 0:
-                # Transaction reverted - likely paused by agent
-                return {
-                    "success": True,
-                    "blocked": True,
-                    "message": "🛡️ Attack was blocked by AMEN agent!",
-                    "tx_hash": swap_hash.hex()
-                }
-            
-            # Check price after
-            price_after = amm.functions.getSpotPrice().call() / 1e8
-            price_deviation = abs(price_after - 2000.0) / 2000.0 * 100
-            
-            # Record the attack event to the database
-            async with async_session_factory() as session:
-                # Record the attack as a threat
-                attack_event = SecurityEvent(
-                    timestamp=datetime.utcnow(),
-                    block_number=receipt['blockNumber'],
-                    event_type="ASSESSMENT",
-                    oracle_price=2000.0,
-                    amm_price=price_after,
-                    price_deviation=price_deviation,
-                    classification="FLASH_LOAN_ATTACK",
-                    confidence=0.95,
-                    explanation=f"Flash loan attack detected! Price manipulated from ${price_before:.2f} to ${price_after:.2f}",
-                    evidence=[f"Price deviation: {price_deviation:.1f}%", f"Attack amount: 5 ETH swap"],
-                    action="PAUSE_AMM",
-                    action_reason="Large price manipulation detected"
-                )
-                session.add(attack_event)
-                await session.commit()
-            
+        elif "SUCCEEDED" in output.upper() or "CRASHED" in output.upper():
             return {
                 "success": True,
                 "blocked": False,
-                "message": f"💥 Attack executed! Price moved from ${price_before:.2f} to ${price_after:.2f}",
-                "tx_hash": swap_hash.hex(),
-                "price_before": price_before,
-                "price_after": price_after
+                "message": "💥 Attack succeeded - price was manipulated!",
+                "output": output[-1000:] if len(output) > 1000 else output
             }
-            
-        except Exception as swap_error:
-            error_msg = str(swap_error).lower()
-            if "paused" in error_msg or "reverted" in error_msg:
-                # Record that attack was blocked
-                async with async_session_factory() as session:
-                    blocked_event = SecurityEvent(
-                        timestamp=datetime.utcnow(),
-                        block_number=w3.eth.block_number,
-                        event_type="AMM_PAUSED",
-                        oracle_price=2000.0,
-                        amm_price=price_before,
-                        price_deviation=0,
-                        classification="FLASH_LOAN_ATTACK",
-                        confidence=0.95,
-                        explanation="🛡️ ATTACK BLOCKED! AMM was already paused by AMEN agent.",
-                        evidence=["Attack attempt detected", "AMM paused - swap reverted"],
-                        action="PAUSE_AMM",
-                        action_reason="Proactive defense - attack blocked",
-                        execute_on_chain=True
-                    )
-                    session.add(blocked_event)
-                    await session.commit()
-                
-                return {
-                    "success": True,
-                    "blocked": True,
-                    "message": "🛡️ Attack was blocked by AMEN agent!"
-                }
-            raise swap_error
-            
+        else:
+            return {
+                "success": True,
+                "blocked": False,
+                "message": "Attack simulation completed",
+                "output": output[-1000:] if len(output) > 1000 else output
+            }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "blocked": False, "message": "Attack timed out (120s)"}
     except Exception as e:
-        return {"success": False, "blocked": False, "message": f"Attack failed: {str(e)}"}
+        return {"success": False, "blocked": False, "message": str(e)}
 
 
 @app.post("/api/admin/reset-amm")
 async def reset_amm():
     """
-    Reset the AMM to ~$2000 price using Web3.py
-    Performs counter-swaps to rebalance the pool
+    Reset the AMM to $2000 price (Fast version - rebalances existing AMM)
     """
+    import subprocess
+    
     try:
-        amm_address = Web3.to_checksum_address(CONTRACT_ADDRESSES["AMM"])
-        weth_address = Web3.to_checksum_address(CONTRACT_ADDRESSES["WETH"])
-        usdc_address = Web3.to_checksum_address(CONTRACT_ADDRESSES["USDC"])
+        contracts_dir = os.path.join(os.path.dirname(__file__), "..", "contracts")
         
-        amm = w3.eth.contract(address=amm_address, abi=AMM_ABI)
-        weth = w3.eth.contract(address=weth_address, abi=ERC20_ABI)
-        usdc = w3.eth.contract(address=usdc_address, abi=ERC20_ABI)
+        # Use fast reset script - much quicker than redeploying
+        result = subprocess.run(
+            "npx hardhat run scripts/fast-reset-amm.js --network sepolia",
+            cwd=contracts_dir,
+            capture_output=True,
+            timeout=90,
+            shell=True,
+            encoding='utf-8',
+            errors='replace'
+        )
         
-        # Get current price and reserves
-        current_price = amm.functions.getSpotPrice().call() / 1e8  # Price has 8 decimals
-        weth_reserve, usdc_reserve = amm.functions.getReserves().call()
+        # Handle None values
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        output = stdout + stderr
         
-        target_price = 2000.0
-        
-        # If price is already close, no action needed
-        if abs(current_price - target_price) / target_price < 0.01:
+        if "Reset" in output or "2000" in output or result.returncode == 0:
             return {
                 "success": True,
-                "message": f"✅ AMM already at target price: ${current_price:.2f}",
-                "new_price": current_price
+                "message": "✅ AMM reset to $2000!",
+                "new_price": 2000.0,
+                "output": output[-500:] if len(output) > 500 else output
             }
-        
-        account = get_agent_account()
-        nonce = w3.eth.get_transaction_count(account.address)
-        
-        # Determine swap direction and amount
-        if current_price < target_price:
-            # Price too low - need to buy WETH with USDC to raise price
-            # Calculate how much USDC to swap
-            price_ratio = target_price / current_price
-            usdc_amount = int(usdc_reserve * (price_ratio - 1) / 2)  # Swap half the difference
-            usdc_amount = min(usdc_amount, int(1_000_000 * 1e6))  # Cap at 1M USDC
-            
-            # Mint USDC
-            mint_tx = usdc.functions.mint(account.address, usdc_amount).build_transaction({
-                'from': account.address, 'nonce': nonce, 'gas': 100000,
-                'gasPrice': w3.eth.gas_price, 'chainId': 11155111
-            })
-            signed = account.sign_transaction(mint_tx)
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-            nonce += 1
-            
-            # Approve
-            approve_tx = usdc.functions.approve(amm_address, usdc_amount).build_transaction({
-                'from': account.address, 'nonce': nonce, 'gas': 100000,
-                'gasPrice': w3.eth.gas_price, 'chainId': 11155111
-            })
-            signed = account.sign_transaction(approve_tx)
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-            nonce += 1
-            
-            # Swap USDC → WETH
-            swap_tx = amm.functions.swap(usdc_address, usdc_amount, 0).build_transaction({
-                'from': account.address, 'nonce': nonce, 'gas': 300000,
-                'gasPrice': w3.eth.gas_price, 'chainId': 11155111
-            })
-            signed = account.sign_transaction(swap_tx)
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-            
         else:
-            # Price too high - need to sell WETH for USDC to lower price
-            price_ratio = current_price / target_price
-            weth_amount = int(weth_reserve * (price_ratio - 1) / 2)
-            weth_amount = min(weth_amount, Web3.to_wei(50, 'ether'))  # Cap at 50 WETH
-            
-            # Mint WETH
-            mint_tx = weth.functions.mint(account.address, weth_amount).build_transaction({
-                'from': account.address, 'nonce': nonce, 'gas': 100000,
-                'gasPrice': w3.eth.gas_price, 'chainId': 11155111
-            })
-            signed = account.sign_transaction(mint_tx)
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-            nonce += 1
-            
-            # Approve
-            approve_tx = weth.functions.approve(amm_address, weth_amount).build_transaction({
-                'from': account.address, 'nonce': nonce, 'gas': 100000,
-                'gasPrice': w3.eth.gas_price, 'chainId': 11155111
-            })
-            signed = account.sign_transaction(approve_tx)
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-            nonce += 1
-            
-            # Swap WETH → USDC
-            swap_tx = amm.functions.swap(weth_address, weth_amount, 0).build_transaction({
-                'from': account.address, 'nonce': nonce, 'gas': 300000,
-                'gasPrice': w3.eth.gas_price, 'chainId': 11155111
-            })
-            signed = account.sign_transaction(swap_tx)
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-        
-        # Check new price
-        new_price = amm.functions.getSpotPrice().call() / 1e8
-        
-        return {
-            "success": True,
-            "message": f"✅ AMM reset! Price: ${current_price:.2f} → ${new_price:.2f}",
-            "new_price": new_price,
-            "tx_hash": tx_hash.hex()
-        }
-        
+            return {
+                "success": False,
+                "message": f"Reset issue: {output[-200:]}",
+                "output": output
+            }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "message": "Reset timed out (90s)"}
     except Exception as e:
-        return {"success": False, "message": f"Reset failed: {str(e)}"}
+        return {"success": False, "message": str(e)}
 
 
 @app.post("/api/admin/restore-price")
 async def restore_price():
     """
     AUTO-RESTORE: Agent calls this to restore AMM price after attack detection
-    Same as reset-amm but with different messaging
+    Executes counter-swap to neutralize the manipulation
     """
-    result = await reset_amm()
-    if result.get("success"):
-        result["message"] = "✅ Price automatically restored!"
-    return result
+    import subprocess
+    
+    try:
+        print("🔄 Agent requesting automatic price restoration...")
+        contracts_dir = os.path.join(os.path.dirname(__file__), "..", "contracts")
+        
+        result = subprocess.run(
+            "npx hardhat run scripts/agent-restore-price.js --network sepolia",
+            cwd=contracts_dir,
+            capture_output=True,
+            timeout=180,  # 3 min timeout for blockchain txs
+            shell=True,
+            encoding='utf-8',
+            errors='replace'
+        )
+        
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        output = stdout + stderr
+        
+        print(f"Restore output:\n{output}")
+        
+        success = "RESTORATION COMPLETE" in output or "already near" in output
+        
+        return {
+            "success": success,
+            "message": "✅ Price automatically restored!" if success else "⚠️ Restoration attempted",
+            "output": output[-800:] if len(output) > 800 else output
+        }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "message": "⏱️ Restoration timed out"}
+    except Exception as e:
+        print(f"Restore error: {e}")
+        return {"success": False, "message": str(e)}
 
 
 @app.post("/api/admin/redeploy-amm")
@@ -855,72 +630,41 @@ async def unpause_protocol():
     Unpause all protocol components (AMM, Vault, Liquidations)
     Used to reset after attack blocking for new tests
     """
+    import subprocess
+    
     try:
-        results = []
-        account = get_agent_account()
-        nonce = w3.eth.get_transaction_count(account.address)
+        contracts_dir = os.path.join(os.path.dirname(__file__), "..", "contracts")
         
-        # Unpause AMM
-        try:
-            amm_address = Web3.to_checksum_address(CONTRACT_ADDRESSES["AMM"])
-            amm = w3.eth.contract(address=amm_address, abi=AMM_ABI)
-            
-            if amm.functions.paused().call():
-                tx = amm.functions.unpause().build_transaction({
-                    'from': account.address, 'nonce': nonce, 'gas': 100000,
-                    'gasPrice': w3.eth.gas_price, 'chainId': 11155111
-                })
-                signed = account.sign_transaction(tx)
-                tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-                w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-                results.append("AMM unpaused")
-                nonce += 1
-            else:
-                results.append("AMM already unpaused")
-        except Exception as e:
-            results.append(f"AMM: {str(e)[:50]}")
+        result = subprocess.run(
+            "npx hardhat run scripts/unpause-all.js --network sepolia",
+            cwd=contracts_dir,
+            capture_output=True,
+            timeout=90,
+            shell=True,
+            encoding='utf-8',
+            errors='replace'
+        )
         
-        # Unpause Vault and unblock liquidations
-        try:
-            vault_address = Web3.to_checksum_address(CONTRACT_ADDRESSES["LENDING_VAULT"])
-            vault = w3.eth.contract(address=vault_address, abi=VAULT_ABI)
-            
-            if vault.functions.paused().call():
-                tx = vault.functions.unpause().build_transaction({
-                    'from': account.address, 'nonce': nonce, 'gas': 100000,
-                    'gasPrice': w3.eth.gas_price, 'chainId': 11155111
-                })
-                signed = account.sign_transaction(tx)
-                tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-                w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-                results.append("Vault unpaused")
-                nonce += 1
-            else:
-                results.append("Vault already unpaused")
-                
-            if vault.functions.liquidationsBlocked().call():
-                tx = vault.functions.unblockLiquidations().build_transaction({
-                    'from': account.address, 'nonce': nonce, 'gas': 100000,
-                    'gasPrice': w3.eth.gas_price, 'chainId': 11155111
-                })
-                signed = account.sign_transaction(tx)
-                tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-                w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-                results.append("Liquidations unblocked")
-                nonce += 1
-            else:
-                results.append("Liquidations already unblocked")
-        except Exception as e:
-            results.append(f"Vault: {str(e)[:50]}")
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        output = stdout + stderr
         
-        return {
-            "success": True,
-            "message": "✅ Protocol reset to normal operating state",
-            "details": results
-        }
-        
+        if "NORMAL" in output or "unpaused" in output.lower():
+            return {
+                "success": True,
+                "message": "✅ Protocol reset to normal operating state",
+                "output": output[-500:] if len(output) > 500 else output
+            }
+        else:
+            return {
+                "success": True,
+                "message": "Reset completed",
+                "output": output[-500:] if len(output) > 500 else output
+            }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "message": "Unpause timed out (90s)"}
     except Exception as e:
-        return {"success": False, "message": f"Unpause failed: {str(e)}"}
+        return {"success": False, "message": str(e)}
 
 
 # =============================================================================

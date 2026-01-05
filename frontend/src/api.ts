@@ -52,43 +52,37 @@ export interface ThreatEntry {
   explanation?: string;
 }
 
-// Cache-busting helper
-const noCacheUrl = (url: string): string => {
-  const separator = url.includes('?') ? '&' : '?';
-  return `${url}${separator}_t=${Date.now()}`;
-};
-
 // Fetch dashboard stats
 export async function fetchStats(): Promise<DashboardStats> {
-  const response = await fetch(noCacheUrl(`${API_BASE}/api/stats`), { cache: 'no-store' });
+  const response = await fetch(`${API_BASE}/api/stats`);
   if (!response.ok) throw new Error('Failed to fetch stats');
   return response.json();
 }
 
 // Fetch recent events
 export async function fetchEvents(limit: number = 50): Promise<SecurityEvent[]> {
-  const response = await fetch(noCacheUrl(`${API_BASE}/api/events?limit=${limit}`), { cache: 'no-store' });
+  const response = await fetch(`${API_BASE}/api/events?limit=${limit}`);
   if (!response.ok) throw new Error('Failed to fetch events');
   return response.json();
 }
 
 // Fetch price history
 export async function fetchPriceHistory(hours: number = 1): Promise<PriceDataPoint[]> {
-  const response = await fetch(noCacheUrl(`${API_BASE}/api/prices?hours=${hours}`), { cache: 'no-store' });
+  const response = await fetch(`${API_BASE}/api/prices?hours=${hours}`);
   if (!response.ok) throw new Error('Failed to fetch prices');
   return response.json();
 }
 
 // Fetch threats
 export async function fetchThreats(limit: number = 20): Promise<ThreatEntry[]> {
-  const response = await fetch(noCacheUrl(`${API_BASE}/api/events/threats?limit=${limit}`), { cache: 'no-store' });
+  const response = await fetch(`${API_BASE}/api/events/threats?limit=${limit}`);
   if (!response.ok) throw new Error('Failed to fetch threats');
   return response.json();
 }
 
 // Fetch actions
 export async function fetchActions(limit: number = 20): Promise<SecurityEvent[]> {
-  const response = await fetch(noCacheUrl(`${API_BASE}/api/events/actions?limit=${limit}`), { cache: 'no-store' });
+  const response = await fetch(`${API_BASE}/api/events/actions?limit=${limit}`);
   if (!response.ok) throw new Error('Failed to fetch actions');
   return response.json();
 }
@@ -130,10 +124,6 @@ export function createWebSocket(onMessage: (data: any) => void): WebSocket {
   const ws = new WebSocket(wsUrl);
   
   ws.onmessage = (event) => {
-    // Ignore pong responses (plain text, not JSON)
-    if (event.data === 'pong') {
-      return;
-    }
     try {
       const data = JSON.parse(event.data);
       onMessage(data);

@@ -6,7 +6,8 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    curl \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
@@ -18,6 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend code
 COPY . .
 
+# Copy contracts directory (needed for scripts)
+COPY ../contracts /app/contracts
+
 # Environment variables will be set in Cloud Run
 ENV PORT=8080
 ENV PYTHONIOENCODING=utf-8
@@ -26,4 +30,4 @@ ENV PYTHONIOENCODING=utf-8
 EXPOSE 8080
 
 # Run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD uvicorn main:app --host 0.0.0.0 --port 8080
